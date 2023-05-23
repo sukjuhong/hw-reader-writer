@@ -90,7 +90,7 @@ void *reader(void *arg)
     rwlock_acquire_readlock(&rwlock);
     // start reading
     int i;
-    for (i = 0; i < args->running_time - 1; i++)
+    for (i = 1; i <= args->running_time - 1; i++)
     {
         TICK;
         space(args->thread_id);
@@ -115,7 +115,7 @@ void *writer(void *arg)
     rwlock_acquire_writelock(&rwlock);
     // start writing
     int i;
-    for (i = 0; i < args->running_time - 1; i++)
+    for (i = 1; i <= args->running_time - 1; i++)
     {
         TICK;
         space(args->thread_id);
@@ -177,6 +177,11 @@ int main(int argc, char *argv[])
         case 'n':
             is_n = true;
             num_workers = atoi(optarg);
+            if (num_workers > 10)
+            {
+                printf("The num_worker variable must be less than 10.");
+                return -1;
+            }
             break;
         case 'a':
             is_a = true;
@@ -219,24 +224,23 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    // a[i]가 잘 적용됬는지 확인
-    // for (int i = 0; i < num_workers; i++)
-    // {
-    //     printf("%d %d %d %d\n", a[i].thread_id, a[i].job_type, a[i].arrival_delay, a[i].running_time);
-    // }
-
     rwlock_init(&rwlock);
+    sem_init(&print_lock, 0, 1);
 
     printf("begin\n");
     printf(" ... heading  ...  \n"); // a[]의 정보를 반영해서 헤딩 라인을 출력
 
     for (int i = 0; i < num_workers; i++)
+    {
         pthread_create(&p[i], NULL, worker, &a[i]);
+    }
 
     for (int i = 0; i < num_workers; i++)
+    {
         pthread_join(p[i], NULL);
+    }
 
-    // printf("end: DB %d\n", value);
+    printf("end: DB %d\n", DB);
 
     return 0;
 }
