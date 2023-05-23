@@ -52,8 +52,12 @@ void rwlock_release_writelock(rwlock_t *rw)
 // Don't change the code below (just use it!) But fix it if bugs are found!
 //
 
-int loops;
-int DB = 0;
+#define TICK sleep(1) // 1/100초 단위로 하고 싶으면 usleep(10000)
+rwlock_t rwlock;
+sem_t print_lock;
+int num_workers;
+int DB;
+char comment[24];
 
 typedef struct
 {
@@ -63,24 +67,19 @@ typedef struct
     int running_time;
 } arg_t;
 
-sem_t print_lock;
-
-#define TAB 10
-void space(int s)
+void print_timeline(int thread_id, char *msg)
 {
-    sem_wait(&print_lock);
-    int i;
-    for (i = 0; i < s * TAB; i++)
-        printf(" ");
+    char line[100] = "| %d\t | something\t |";
+    for (int i = 0; i < num_workers; i++)
+    {
+        if (i == thread_id)
+            strcat(line, " %s\t |");
+        else
+            strcat(line, " \t\t\t |");
+    }
+    strcat(line, "\n");
+    printf(line, rwlock.AR, msg);
 }
-
-void space_end()
-{
-    sem_post(&print_lock);
-}
-
-#define TICK sleep(1) // 1/100초 단위로 하고 싶으면 usleep(10000)
-rwlock_t rwlock;
 
 void *reader(void *arg)
 {
@@ -88,22 +87,34 @@ void *reader(void *arg)
 
     TICK;
     rwlock_acquire_readlock(&rwlock);
+    sem_wait(&print_lock);
+    sprintf(comment, "acquire rwlock");
+    print_timeline(args->thread_id, comment);
+    sem_post(&print_lock);
     // start reading
     int i;
     for (i = 1; i <= args->running_time - 1; i++)
     {
+
         TICK;
-        space(args->thread_id);
-        printf("reading %d of %d\n", i, args->running_time);
-        space_end();
+        sem_wait(&print_lock);
+        sprintf(comment, "reading %d of %d", i, args->running_time);
+        print_timeline(args->thread_id, comment);
+        sem_post(&print_lock);
     }
     TICK;
-    space(args->thread_id);
-    printf("reading %d of %d, DB is %d\n", i, args->running_time, DB);
-    space_end();
+    sem_wait(&print_lock);
+    sprintf(comment, "reading %d of %d", i, args->running_time);
+    print_timeline(args->thread_id, comment);
+    sem_post(&print_lock);
+
     // end reading
     TICK;
     rwlock_release_readlock(&rwlock);
+    sem_wait(&print_lock);
+    sprintf(comment, "release rwlock");
+    print_timeline(args->thread_id, comment);
+    sem_post(&print_lock);
     return NULL;
 }
 
@@ -113,23 +124,34 @@ void *writer(void *arg)
 
     TICK;
     rwlock_acquire_writelock(&rwlock);
+    sem_wait(&print_lock);
+    sprintf(comment, "acquire rwlock");
+    print_timeline(args->thread_id, comment);
+    sem_post(&print_lock);
     // start writing
     int i;
     for (i = 1; i <= args->running_time - 1; i++)
     {
         TICK;
-        space(args->thread_id);
-        printf("writing %d of %d\n", i, args->running_time);
-        space_end();
+        sem_wait(&print_lock);
+        sprintf(comment, "writing %d of %d", i, args->running_time);
+        print_timeline(args->thread_id, comment);
+        sem_post(&print_lock);
     }
     TICK;
     DB++;
-    space(args->thread_id);
-    printf("writing %d of %d, DB is %d\n", i, args->running_time, DB);
-    space_end();
+    sem_wait(&print_lock);
+    sprintf(comment, "writing %d of %d", i, args->running_time);
+    print_timeline(args->thread_id, comment);
+    sem_post(&print_lock);
+
     // end writing
     TICK;
     rwlock_release_writelock(&rwlock);
+    sem_wait(&print_lock);
+    sprintf(comment, "release rwlock");
+    print_timeline(args->thread_id, comment);
+    sem_post(&print_lock);
 
     return NULL;
 }
@@ -138,12 +160,9 @@ void *worker(void *arg)
 {
     arg_t *args = (arg_t *)arg;
     int i;
-    for (i = 0; i < args->arrival_delay; i++)
+    for (i = 1; i <= args->arrival_delay; i++)
     {
         TICK;
-        space(args->thread_id);
-        printf("arrival delay %d of %d\n", i, args->arrival_delay);
-        space_end();
     }
     if (args->job_type == 0)
         reader(arg);
@@ -151,9 +170,9 @@ void *worker(void *arg)
         writer(arg);
     else
     {
-        space(args->thread_id);
-        printf("Unknown job %d\n", args->thread_id);
-        space_end();
+        sem_wait(&print_lock);
+        print_timeline(args->thread_id, "Unknown Job");
+        sem_post(&print_lock);
     }
     return NULL;
 }
@@ -162,7 +181,6 @@ void *worker(void *arg)
 
 int main(int argc, char *argv[])
 {
-    int num_workers;
     pthread_t p[MAX_WORKERS];
     arg_t a[MAX_WORKERS];
 
@@ -229,6 +247,14 @@ int main(int argc, char *argv[])
 
     printf("begin\n");
     printf(" ... heading  ...  \n"); // a[]의 정보를 반영해서 헤딩 라인을 출력
+    char heading[200] = "| AR\t | writelock->Q\t |";
+    for (int i = 0; i < num_workers; i++)
+    {
+        char heading_thread[24];
+        sprintf(heading_thread, " %c%d\t\t\t |", a[i].job_type ? 'W' : 'R', a[i].thread_id);
+        strcat(heading, heading_thread);
+    }
+    printf("%s\n", heading);
 
     for (int i = 0; i < num_workers; i++)
     {
