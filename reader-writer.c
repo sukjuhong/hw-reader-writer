@@ -52,7 +52,7 @@ void rwlock_release_writelock(rwlock_t *rw)
 // Don't change the code below (just use it!) But fix it if bugs are found!
 //
 
-#define TICK sleep(1) // 1/100초 단위로 하고 싶으면 usleep(10000)
+#define TICK usleep(500000) // 1/100초 단위로 하고 싶으면 usleep(10000)
 rwlock_t rwlock;
 sem_t print_lock;
 int num_workers;
@@ -75,7 +75,7 @@ void print_timeline(int thread_id, char *msg)
         if (i == thread_id)
             strcat(line, " %s\t |");
         else
-            strcat(line, " \t\t\t |");
+            strcat(line, " \t\t |");
     }
     strcat(line, "\n");
     printf(line, rwlock.AR, msg);
@@ -86,11 +86,11 @@ void *reader(void *arg)
     arg_t *args = (arg_t *)arg;
 
     TICK;
-    rwlock_acquire_readlock(&rwlock);
     sem_wait(&print_lock);
-    sprintf(comment, "acquire rwlock");
+    sprintf(comment, "acquire");
     print_timeline(args->thread_id, comment);
     sem_post(&print_lock);
+    rwlock_acquire_readlock(&rwlock);
     // start reading
     int i;
     for (i = 1; i <= args->running_time - 1; i++)
@@ -98,13 +98,13 @@ void *reader(void *arg)
 
         TICK;
         sem_wait(&print_lock);
-        sprintf(comment, "reading %d of %d", i, args->running_time);
+        sprintf(comment, "reading %d/%d", i, args->running_time);
         print_timeline(args->thread_id, comment);
         sem_post(&print_lock);
     }
     TICK;
     sem_wait(&print_lock);
-    sprintf(comment, "reading %d of %d", i, args->running_time);
+    sprintf(comment, "reading %d/%d", i, args->running_time);
     print_timeline(args->thread_id, comment);
     sem_post(&print_lock);
 
@@ -112,7 +112,7 @@ void *reader(void *arg)
     TICK;
     rwlock_release_readlock(&rwlock);
     sem_wait(&print_lock);
-    sprintf(comment, "release rwlock");
+    sprintf(comment, rwlock.AR == 0 ? "rel/wake" : "release");
     print_timeline(args->thread_id, comment);
     sem_post(&print_lock);
     return NULL;
@@ -123,35 +123,35 @@ void *writer(void *arg)
     arg_t *args = (arg_t *)arg;
 
     TICK;
-    rwlock_acquire_writelock(&rwlock);
     sem_wait(&print_lock);
-    sprintf(comment, "acquire rwlock");
+    sprintf(comment, rwlock.AR ? "acq/sleep" : "acquire");
     print_timeline(args->thread_id, comment);
     sem_post(&print_lock);
+    rwlock_acquire_writelock(&rwlock);
     // start writing
     int i;
     for (i = 1; i <= args->running_time - 1; i++)
     {
         TICK;
         sem_wait(&print_lock);
-        sprintf(comment, "writing %d of %d", i, args->running_time);
+        sprintf(comment, "writing %d/%d", i, args->running_time);
         print_timeline(args->thread_id, comment);
         sem_post(&print_lock);
     }
     TICK;
     DB++;
     sem_wait(&print_lock);
-    sprintf(comment, "writing %d of %d", i, args->running_time);
+    sprintf(comment, "writing %d/%d", i, args->running_time);
     print_timeline(args->thread_id, comment);
     sem_post(&print_lock);
 
     // end writing
     TICK;
-    rwlock_release_writelock(&rwlock);
     sem_wait(&print_lock);
-    sprintf(comment, "release rwlock");
+    sprintf(comment, "release");
     print_timeline(args->thread_id, comment);
     sem_post(&print_lock);
+    rwlock_release_writelock(&rwlock);
 
     return NULL;
 }
@@ -251,7 +251,7 @@ int main(int argc, char *argv[])
     for (int i = 0; i < num_workers; i++)
     {
         char heading_thread[24];
-        sprintf(heading_thread, " %c%d\t\t\t |", a[i].job_type ? 'W' : 'R', a[i].thread_id);
+        sprintf(heading_thread, " %c%d\t\t |", a[i].job_type ? 'W' : 'R', a[i].thread_id);
         strcat(heading, heading_thread);
     }
     printf("%s\n", heading);
