@@ -127,13 +127,22 @@ void *reader(void *arg)
 
 void *writer(void *arg)
 {
+    bool flag = false;
     arg_t *args = (arg_t *)arg;
 
     TICK;
     sem_wait(&ptlock.mutex);
     sprintf(ptlock.buffer[args->thread_id], rwlock.AR ? "acq/sleep" : "acquire");
+    if (rwlock.AR) flag = true;
     sem_post(&ptlock.mutex);
     rwlock_acquire_writelock(&rwlock);
+    if (flag)
+    {
+        sem_wait(&ptlock.mutex);
+        sprintf(ptlock.buffer[args->thread_id], "ready\t");
+        if (rwlock.AR) flag = true;
+        sem_post(&ptlock.mutex);
+    }
     // start writing
     int i;
     for (i = 1; i <= args->running_time; i++)
