@@ -86,7 +86,7 @@ void *printer(void *arg)
     while (!ptlock.done)
     {
         TICK;
-        printf("%d\t%d\tsomething\t", cur_time, rwlock.AR);
+        printf("%d\t%d\t", cur_time, rwlock.AR);
         for (int i = 0; i < num_workers; i++)
         {
             printf("%s\t", *ptlock.buffer[i] != '\0' ? ptlock.buffer[i] : "\t");
@@ -132,7 +132,7 @@ void *writer(void *arg)
 
     TICK;
     sem_wait(&ptlock.mutex);
-    sprintf(ptlock.buffer[args->thread_id], rwlock.AR ? "acq/sleep" : "acquire");
+    sprintf(ptlock.buffer[args->thread_id], rwlock.AR ? "acq/sleep" : "acquire\t");
     if (rwlock.AR) flag = true;
     sem_post(&ptlock.mutex);
     rwlock_acquire_writelock(&rwlock);
@@ -140,7 +140,6 @@ void *writer(void *arg)
     {
         sem_wait(&ptlock.mutex);
         sprintf(ptlock.buffer[args->thread_id], "ready\t");
-        if (rwlock.AR) flag = true;
         sem_post(&ptlock.mutex);
     }
     // start writing
@@ -158,7 +157,7 @@ void *writer(void *arg)
     TICK;
     rwlock_release_writelock(&rwlock);
     sem_wait(&ptlock.mutex);
-    sprintf(ptlock.buffer[args->thread_id], "release");
+    sprintf(ptlock.buffer[args->thread_id], "release\t");
     sem_post(&ptlock.mutex);
 
     return NULL;
@@ -258,10 +257,10 @@ int main(int argc, char *argv[])
 
     printf("begin\n");
     printf(" ... heading  ...  \n"); // a[]의 정보를 반영해서 헤딩 라인을 출력
-    printf("Time\tAR\twritelock->Q\t");
+    printf("Time\tAR\t");
     for (int i = 0; i < num_workers; i++)
     {
-        printf("%s%d(%d:%d)\t\t", a[i].job_type ? "W" : "R", a[i].thread_id, a[i].arrival_delay, a[i].running_time);
+        printf("%s%d(%d:%d)  \t", a[i].job_type ? "W" : "R", a[i].thread_id, a[i].arrival_delay, a[i].running_time);
     }
     printf("\n");
 

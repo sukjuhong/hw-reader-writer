@@ -115,7 +115,7 @@ void *printer(void *arg)
     while (!ptlock.done)
     {
         TICK;
-        printf("%d\t%d\t%d\t%d\t%d\tsomething\tsomething\t", cur_time, rwlock.AR, rwlock.AW, rwlock.WR, rwlock.WW);
+        printf("%d\t%d\t%d\t%d\t%d\t", cur_time, rwlock.AR, rwlock.AW, rwlock.WR, rwlock.WW);
         for (int i = 0; i < num_workers; i++)
         {
             printf("%s\t", *ptlock.buffer[i] != '\0' ? ptlock.buffer[i] : "\t");
@@ -298,10 +298,10 @@ int main(int argc, char *argv[])
 
     printf("begin\n");
     printf(" ... heading  ...  \n"); // a[]의 정보를 반영해서 헤딩 라인을 출력
-    printf("Time\tAR\tAW\tWR\tWW\tokToRead->Q\tokToWrite->Q\t");
+    printf("Time\tAR\tAW\tWR\tWW\t");
     for (int i = 0; i < num_workers; i++)
     {
-        printf("%s%d(%d:%d)\t\t", a[i].job_type ? "W" : "R", a[i].thread_id, a[i].arrival_delay, a[i].running_time);
+        printf("%s%d(%d:%d)  \t", a[i].job_type ? "W" : "R", a[i].thread_id, a[i].arrival_delay, a[i].running_time);
     }
     printf("\n");
 
