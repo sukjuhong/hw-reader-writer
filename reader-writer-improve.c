@@ -1,85 +1,28 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <stdbool.h>
+#include <string.h>
 #include <pthread.h>
 #include <semaphore.h>
 
+#define TICK_HALF usleep(250000)
+#define TICK usleep(500000)
+#define MAX_WORKERS 10
+
 typedef struct _rwlock_t
 {
-    int AR, AW, WR, WW;
-    pthread_mutex_t m;
-    pthread_cond_t okToRead, okToWrite;
+    sem_t ok_to_read, ok_to_write;
+    sem_t mutex;
+    int AR, AW, WR, WW; // number of Active Readers
 } rwlock_t;
 
-rwlock_t rwlock;
-
-void rwlock_init(rwlock_t *rw)
+typedef struct _ptlock_t
 {
-    rw->AR = 0;
-    rw->AW = 0;
-    rw->WR = 0;
-    rw->WW = 0;
-    pthread_cond_init(&(rw->m), NULL);
-    pthread_cond_init(&(rw->okToRead), NULL);
-    pthread_cond_init(&(rw->okToWrite), NULL);
-}
-
-void rwlock_acquire_readlock(rwlock_t *rw)
-{
-    pthread_mutex_lock(&rw->m);
-    while (rw->AW > 0)
-    { // Bad
-        rw->WR++;
-        Cond_wait(&rw->okToRead, &rw->m);
-        rw->WR--;
-    }
-    rw->AR++;
-    pthread_mutex_unlock(&rw->m);
-}
-
-void rwlock_release_readlock(rwlock_t *rw)
-{
-    pthread_mutex_unlock(&rw->m);
-    rw->AR--;
-    if (rw->AR == 0 && rw->WW > 0)
-        pthread_cond_signal(&rw->okToWrite);
-    pthread_mutex_unlock(&rw->m);
-}
-
-void rwlock_acquire_writelock(rwlock_t *rw)
-{
-    pthread_mutex_unlock(&rw->m);
-    while ((rw->AW + rw->AR) > 0)
-    {
-        rw->WW++;
-        pthread_cond_broadcast(&rw->okToWrite);
-        rw->WW--;
-    }
-    rw->AW++;
-    pthread_mutex_unlock(&rw->m);
-}
-
-void rwlock_release_writelock(rwlock_t *rw)
-{
-    pthread_mutex_unlock(&rw->m);
-    rw->AW--;
-    if (rw->WW > 0)
-    {
-        Cond_signal(&rw->okToWrite);
-    }
-    else if (rw->WR > 0)
-    {
-        Cond_broadcast(&rw->okToRead);
-    }
-    pthread_mutex_unlock(&rw->m);
-}
-
-//
-// Don't change the code below (just use it!) But fix it if bugs are found!
-//
-
-int loops;
-int DB = 0;
+    sem_t mutex;
+    char buffer[MAX_WORKERS][50];
+    bool done;
+} ptlock_t;
 
 typedef struct
 {
@@ -89,73 +32,175 @@ typedef struct
     int running_time;
 } arg_t;
 
-sem_t print_lock;
-
-#define TAB 10
-void space(int s)
-{
-    sem_wait(&print_lock);
-    int i;
-    for (i = 0; i < s * TAB; i++)
-        printf(" ");
-}
-
-void space_end()
-{
-    sem_post(&print_lock);
-}
-
-#define TICK sleep(1) // 1/100초 단위로 하고 싶으면 usleep(10000)
 rwlock_t rwlock;
+ptlock_t ptlock;
+int num_workers;
+int cur_time;
+int DB;
+
+void rwlock_init(rwlock_t *rw)
+{
+    rw->AR = 0, rw->AW = 0, rw->WR = 0, rw->WW = 0;
+    sem_init(&rw->mutex, 0, 1);
+    sem_init(&rw->ok_to_read, 0, 0);
+    sem_init(&rw->ok_to_write, 0, 0);
+}
+
+void ptlock_init(ptlock_t *pt)
+{
+    pt->done = false;
+    memset(pt->buffer, '\0', sizeof(pt->buffer));
+    sem_init(&pt->mutex, 0, 1);
+}
+
+void rwlock_acquire_readlock(rwlock_t *rw)
+{
+    sem_wait(&rw->mutex);
+    if (rw->WW > 0)
+    {
+        rw->WR++;
+        sem_post(&rw->mutex);
+        sem_wait(&rw->ok_to_read);
+        sem_wait(&rw->mutex);
+        rw->WR--;
+    }
+    rw->AR++;
+    sem_post(&rw->mutex);
+}
+
+void rwlock_release_readlock(rwlock_t *rw)
+{
+    sem_wait(&rw->mutex);
+    rw->AR--;
+    if (rw->AR == 0 && rw->WW > 0)
+        sem_post(&rw->ok_to_write);
+    sem_post(&rw->mutex);
+}
+
+void rwlock_acquire_writelock(rwlock_t *rw)
+{
+    sem_wait(&rw->mutex);
+    if (rw->AR + rw->AW > 0)
+    {
+        rw->WW++;
+        sem_post(&rw->mutex);
+        sem_wait(&rw->ok_to_write);
+        sem_wait(&rw->mutex);
+        rw->WW--;
+    }
+    rw->AW++;
+    sem_post(&rw->mutex);
+}
+
+void rwlock_release_writelock(rwlock_t *rw)
+{
+    sem_wait(&rw->mutex);
+    rw->AW--;
+    if (rw->AW == 0)
+        if (rw->WW > 0)
+        {
+            sem_post(&rw->ok_to_write);
+        }
+        else if (rw->WR > 0)
+        {
+            for (int i = 0; i < rw->WR; i++)
+                sem_post(&rw->ok_to_read);
+        }
+    sem_post(&rw->mutex);
+}
+
+void *printer(void *arg)
+{
+    TICK_HALF;
+    while (!ptlock.done)
+    {
+        TICK;
+        printf("%d\t%d\t%d\t%d\t%d\tsomething\tsomething\t", cur_time, rwlock.AR, rwlock.AW, rwlock.WR, rwlock.WW);
+        for (int i = 0; i < num_workers; i++)
+        {
+            printf("%s\t", *ptlock.buffer[i] != '\0' ? ptlock.buffer[i] : "\t");
+        }
+        printf("\n");
+        memset(ptlock.buffer, '\0', sizeof(ptlock.buffer));
+        cur_time++;
+    }
+    return NULL;
+}
 
 void *reader(void *arg)
 {
     arg_t *args = (arg_t *)arg;
+    bool flag = false;
 
     TICK;
+    sem_wait(&ptlock.mutex);
+    sprintf(ptlock.buffer[args->thread_id], rwlock.WW ? "acq/sleep" : "acquire\t");
+    if (rwlock.WW) flag = true;
+    sem_post(&ptlock.mutex);
     rwlock_acquire_readlock(&rwlock);
+    if (flag)
+    {
+        sem_wait(&ptlock.mutex);
+        sprintf(ptlock.buffer[args->thread_id], "ready\t");
+        sem_post(&ptlock.mutex);
+    }
     // start reading
     int i;
-    for (i = 0; i < args->running_time - 1; i++)
+    for (i = 1; i <= args->running_time; i++)
     {
         TICK;
-        space(args->thread_id);
-        printf("reading %d of %d\n", i, args->running_time);
-        space_end();
+        sem_wait(&ptlock.mutex);
+        sprintf(ptlock.buffer[args->thread_id], "reading %d/%d", i, args->running_time);
+        sem_post(&ptlock.mutex);
     }
-    TICK;
-    space(args->thread_id);
-    printf("reading %d of %d, DB is %d\n", i, args->running_time, DB);
-    space_end();
     // end reading
     TICK;
     rwlock_release_readlock(&rwlock);
+    sem_wait(&ptlock.mutex);
+    sprintf(ptlock.buffer[args->thread_id], !rwlock.AR && rwlock.WW ? "rel/wake" : "release\t");
+    sem_post(&ptlock.mutex);
     return NULL;
 }
 
 void *writer(void *arg)
 {
+    bool flag = false;
     arg_t *args = (arg_t *)arg;
 
     TICK;
+    sem_wait(&ptlock.mutex);
+    sprintf(ptlock.buffer[args->thread_id], rwlock.AR + rwlock.AW ? "acq/sleep" : "acquire");
+    if (rwlock.AR)
+        flag = true;
+    sem_post(&ptlock.mutex);
     rwlock_acquire_writelock(&rwlock);
+    if (flag)
+    {
+        sem_wait(&ptlock.mutex);
+        sprintf(ptlock.buffer[args->thread_id], "ready\t");
+        if (rwlock.AR)
+            flag = true;
+        sem_post(&ptlock.mutex);
+    }
     // start writing
     int i;
-    for (i = 0; i < args->running_time - 1; i++)
+    for (i = 1; i <= args->running_time; i++)
     {
         TICK;
-        space(args->thread_id);
-        printf("writing %d of %d\n", i, args->running_time);
-        space_end();
+        sem_wait(&ptlock.mutex);
+        if (i == args->running_time)
+            DB++;
+        sprintf(ptlock.buffer[args->thread_id], "writing %d/%d", i, args->running_time);
+        sem_post(&ptlock.mutex);
     }
-    TICK;
-    DB++;
-    space(args->thread_id);
-    printf("writing %d of %d, DB is %d\n", i, args->running_time, DB);
-    space_end();
+
     // end writing
     TICK;
     rwlock_release_writelock(&rwlock);
+    sem_wait(&ptlock.mutex);
+    sprintf(ptlock.buffer[args->thread_id], !rwlock.AW && rwlock.WR + rwlock.WW ? "rel/wake" : "release\t");
+    sem_post(&ptlock.mutex);
+
     return NULL;
 }
 
@@ -163,12 +208,12 @@ void *worker(void *arg)
 {
     arg_t *args = (arg_t *)arg;
     int i;
-    for (i = 0; i < args->arrival_delay; i++)
+    for (i = 1; i <= args->arrival_delay; i++)
     {
         TICK;
-        space(args->thread_id);
-        printf("arrival delay %d of %d\n", i, args->arrival_delay);
-        space_end();
+        sem_wait(&ptlock.mutex);
+        sprintf(ptlock.buffer[args->thread_id], "delay %d/%d", i, args->arrival_delay);
+        sem_post(&ptlock.mutex);
     }
     if (args->job_type == 0)
         reader(arg);
@@ -176,52 +221,104 @@ void *worker(void *arg)
         writer(arg);
     else
     {
-        space(args->thread_id);
-        printf("Unknown job %d\n", args->thread_id);
-        space_end();
+        TICK;
+        sem_wait(&ptlock.mutex);
+        sprintf(ptlock.buffer[args->thread_id], "unknown");
+        sem_post(&ptlock.mutex);
     }
     return NULL;
 }
 
-#define MAX_WORKERS 10
-
 int main(int argc, char *argv[])
 {
-
-    // command line argument로 공급 받거나
-    // 예: -n 6 -a 0:0:5,0:1:8,1:3:4,0:5:7,1:6:2,0:7:4    또는   -n 6 -a r:0:5,r:1:8,w:3:4,r:5:7,w:6:2,r:7:4
-    // 아래 코드에서 for-loop을 풀고 배열 a에 직접 쓰는 방법으로 worker 세트를 구성한다.
-
-    int num_workers;
-    pthread_t p[MAX_WORKERS];
+    pthread_t worker_thread[MAX_WORKERS];
+    pthread_t printer_thread;
     arg_t a[MAX_WORKERS];
 
-    for (int i = 0; i < argc; i++)
+    int opt;
+    bool is_n = false, is_a = false;
+    extern char *optarg;
+
+    while ((opt = getopt(argc, argv, "n:a:")) != -1)
     {
-        printf("%s", argv[i]);
+        switch (opt)
+        {
+        case 'n':
+            is_n = true;
+            num_workers = atoi(optarg);
+            if (num_workers > 10)
+            {
+                printf("The num_worker variable must be less than 10.");
+                return -1;
+            }
+            break;
+        case 'a':
+            is_a = true;
+            int idx = 0;
+            char *next_ptr;
+            char *ptr = strtok_r(optarg, ",", &next_ptr);
+            while (ptr != NULL)
+            {
+                int sub_idx = 0;
+                char *sub_next_ptr;
+                char *sub_ptr = strtok_r(ptr, ":", &sub_next_ptr);
+                a[idx].thread_id = idx;
+                while (sub_ptr != NULL)
+                {
+                    switch (sub_idx)
+                    {
+                    case 0:
+                        a[idx].job_type = atoi(sub_ptr);
+                        break;
+                    case 1:
+                        a[idx].arrival_delay = atoi(sub_ptr);
+                        break;
+                    case 2:
+                        a[idx].running_time = atoi(sub_ptr);
+                        break;
+                    }
+                    sub_ptr = strtok_r(NULL, ":", &sub_next_ptr);
+                    sub_idx++;
+                }
+                ptr = strtok_r(NULL, ",", &next_ptr);
+                idx++;
+            }
+            break;
+        }
+    }
+
+    if (!(is_n & is_a))
+    {
+        printf("You must specify the n and a options.");
+        return -1;
     }
 
     rwlock_init(&rwlock);
-
-    int i;
-    // for (i = 0; i < num_workers; i++)
-    // {
-    //     a[i].thread_id = i;
-    //     a[i].job_type = ...;
-    //     a[i].arrival_delay = ...;
-    //     a[i].running_time = ...;
-    // }
+    ptlock_init(&ptlock);
 
     printf("begin\n");
     printf(" ... heading  ...  \n"); // a[]의 정보를 반영해서 헤딩 라인을 출력
+    printf("Time\tAR\tAW\tWR\tWW\tokToRead->Q\tokToWrite->Q\t");
+    for (int i = 0; i < num_workers; i++)
+    {
+        printf("%s%d(%d:%d)\t\t", a[i].job_type ? "W" : "R", a[i].thread_id, a[i].arrival_delay, a[i].running_time);
+    }
+    printf("\n");
 
-    for (i = 0; i < num_workers; i++)
-        pthread_create(&p[i], NULL, worker, &a[i]);
+    for (int i = 0; i < num_workers; i++)
+    {
+        pthread_create(&worker_thread[i], NULL, worker, &a[i]);
+    }
+    pthread_create(&printer_thread, NULL, printer, NULL);
 
-    for (i = 0; i < num_workers; i++)
-        pthread_join(p[i], NULL);
+    for (int i = 0; i < num_workers; i++)
+    {
+        pthread_join(worker_thread[i], NULL);
+    }
+    ptlock.done = true;
+    pthread_join(printer_thread, NULL);
 
-    // printf("end: value %d\n", value);
+    printf("end: DB %d\n", DB);
 
     return 0;
 }
